@@ -4,7 +4,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.sql.Connection;
 import java.sql.DriverManager;
-
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -31,6 +31,22 @@ public class Main extends Application {
 	protected TextArea previewtxa;
 	protected MainEventHandler mainEvent = new MainEventHandler();
 	protected Connection con; //connection variable for sql
+	protected File logFiles, econFiles;
+	protected File[] logList, econList;
+
+	protected boolean spam = true;
+	protected double scrap = 0.0;
+	protected List<Lumber> lumberlist = new ArrayList<>();
+	protected double countArray[] = new double[3];
+	protected double scrapEcon = 0.0;
+	protected double ttlOne = 0.0;
+	protected double ttlTwo = 0.0;
+	protected double ttlThree = 0.0;
+	protected double ttlScrap = 0.0;
+	protected double ttlVal = 0.0;
+	protected Lumber lOne = new Lumber(1,1,1,0);
+	protected Lumber lTwo = new Lumber(1,1,1,0);
+	protected Lumber lThree = new Lumber(1,1,1,0);
 
 	@Override
 	public void start(Stage primaryStage) {
@@ -122,16 +138,15 @@ public class Main extends Application {
 
 		@Override
 		public void handle(ActionEvent event) {
-			File logFiles = new File("../NaturalLogsOps/src/LogFiles");
-			File[] logList = logFiles.listFiles();
-			File econFiles = new File("../NaturalLogsOps/src/EconFiles");
-			File[] econList = econFiles.listFiles();
+
 			if(event.getSource().equals(fileUpdatebtn))
 			{
-				String text = "Log files that were added: \n";
 				selectLog.getItems().clear();
 				selectLog.getItems().add("--- Select Log File ---");
 				selectLog.getSelectionModel().selectFirst();
+				logFiles = new File("../NaturalLogsOps/src/LogFiles");
+				logList = logFiles.listFiles();
+				String text = "Log files that were added: \n";
 				for(File file : logList)
 				{
 					if(file.isFile())
@@ -140,11 +155,12 @@ public class Main extends Application {
 						text += file.getName() + "\n";
 					}
 				}
-
-				text += "\nEconomic files that were added: \n";
 				selectEcon.getItems().clear();
 				selectEcon.getItems().add("--- Select Econ File ---");
 				selectEcon.getSelectionModel().selectFirst();
+				econFiles = new File("../NaturalLogsOps/src/EconFiles");
+				econList = econFiles.listFiles();
+				text += "\nEconomic files that were added: \n";
 				for(File file : econList)
 				{
 					if(file.isFile())
@@ -159,31 +175,38 @@ public class Main extends Application {
 			{
 				File log = new File("");
 				File econ = new File("");
-				for(File file : logList)
-				{
-					if(file.getName().equals(selectLog.getSelectionModel().getSelectedItem()))
+				try{
+						for(File file : logList)
 					{
-						log = file;
-						break;
+						if(file.getName().equals(selectLog.getSelectionModel().getSelectedItem()))
+						{
+							log = file;
+							break;
+						}
 					}
-				}
-				for(File file : econList)
-				{
-					if(file.getName().equals(selectEcon.getSelectionModel().getSelectedItem()))
+					for(File file : econList)
 					{
-						econ = file;
-						break;
+						if(file.getName().equals(selectEcon.getSelectionModel().getSelectedItem()))
+						{
+							econ = file;
+							break;
+						}
 					}
-				}
 
-				try
-				{
-					optimization(log, econ);
+					try
+					{
+						optimization(log, econ);
+						spam = false;
+					}
+					catch(FileNotFoundException e)
+					{
+						previewtxa.setText("File not found");
+						//Nothing implemented if file is not found.
+					}
 				}
-				catch(FileNotFoundException e)
+				catch(NullPointerException e)
 				{
-					previewtxa.setText("File not found");
-					//Nothing implemented if file is not found.
+					previewtxa.setText("File system has not been updated; please update the file system.");
 				}
 			}
 			else if(event.getSource().equals(resetbtn))
@@ -192,18 +215,46 @@ public class Main extends Application {
 			}
 			else if(event.getSource().equals(processOrderbtn))
 			{
-				//Need jdbc connector to be established for MySQL injection.
-				try {
-					Class.forName("com.mysql.jdbc.Driver");
-					con = DriverManager.getConnection("jdbc:mysql://localhost:3306/blaze?useSSL=false","root", "root");
-				} catch(Exception e) {
-					previewtxa.setText("JDBC not implemented. ");
-					e.printStackTrace();
+				if(spam == false)
+				{
+					String result = "";
+					//Need jdbc connector to be established for MySQL injection.
+					try {
+						Class.forName("com.mysql.jdbc.Driver");
+						con = DriverManager.getConnection("jdbc:mysql://localhost:3306/warehouse?useSSL=false","root", "root");
+					} catch(Exception e) {
+						previewtxa.setText("JDBC not implemented. ");
+						e.printStackTrace();
+					}
+					int count = 0;
+					for(Lumber l: lumberlist)
+					{
+						try{
+							boolean exists = Query.queryExist(con, l);
+
+							if(exists == true)
+							{
+								result += "Lumber entry to process:\n" + Query.querySelect(con, l);
+								Query.queryUpdate(con, l, count, countArray, scrap, scrapEcon);
+								result += "\nAfter processing:\n" + Query.querySelect(con, l) + "\n";
+							}
+							else
+							{
+								result += l.getHeight() + "x" + l.getWidth() + "x" + l.getLength()
+								+ " did not exist. Creating new entry.";
+								Query.queryInsert(con, l, count, countArray, scrap, scrapEcon);
+								result += "\nAfter processing:\n" + Query.querySelect(con, l) + "\n";
+							}
+							previewtxa.setText(result);
+						}
+						catch(SQLException e)
+						{
+							e.printStackTrace();
+						}
+						count++;
+					}
+					spam = true;
 				}
-				//Need to create MySQL injections for adding a non-existent board to the WoodStack table.
-				/*Need to create Update statements for values and quantities of boards to be added from generate preview
-				  to the WoodStack where applicable*/
-				//May need to add a flux capacitor to speed up processing speed of optimization.
 			}
 		}
 	}
@@ -211,7 +262,9 @@ public class Main extends Application {
 	private void optimization(File logs, File econ) throws FileNotFoundException
 	{
 		List<Log> loglist = new ArrayList<>();
-		List<Lumber> lumberlist = new ArrayList<>();
+
+		String text = "";
+		String trunc;
 
 		Scanner scan = new Scanner(logs);
 
@@ -236,79 +289,80 @@ public class Main extends Application {
 		scan = new Scanner(econ);
 
 		while(scan.hasNext()){
-			String height = scan.next();
-			String width = scan.next();
-			String length = scan.next();
-			String value = scan.next();
+
+			String temp = scan.next();
+
+			if(scan.hasNext() == false)
+			{
+				scrapEcon = Double.parseDouble(temp);
+			}
+			else
+			{
+				String height = temp;
+				String width = scan.next();
+				String length = scan.next();
+				String value = scan.next();
+
+				double h = Double.parseDouble(height);
+				double w = Double.parseDouble(width);
+				double l = Double.parseDouble(length);
+				double v = Double.parseDouble(value);
 
 
-			double h = Double.parseDouble(height);
-			double w = Double.parseDouble(width);
-			double l = Double.parseDouble(length);
-			double v = Double.parseDouble(value);
-
-
-			Lumber lumber = new Lumber(h,w,l,v);
-			lumberlist.add(lumber);
+				Lumber lumber = new Lumber(h,w,l,v);
+				lumberlist.add(lumber);
+			}
 		}
 
 		scan.close();
 
 		for(Log l: loglist)
 		{
-			Lumber lOne = lumberlist.get(0);
-			Lumber lTwo = lumberlist.get(1);
-			Lumber lThree = lumberlist.get(2);
-			Lumber lScrap = lumberlist.get(3);
-			double scrap = 0.0;
+			//We need to implement a method for if the file only contains one type of lumber.
+			lOne = lumberlist.get(0);
+			lTwo = lumberlist.get(1);
+			lThree = lumberlist.get(2);
+			double lScrap = scrapEcon;
 			Lumber[] priceOrder = new Lumber[3];
 
-			//double priceOne = lOne.calculateArea() * lOne.getValue();
-			//double priceTwo = lTwo.calculateArea() * lTwo.getValue();
-			//double priceThree = lThree.calculateArea() * lThree.getValue();
+			scrap = 0.0;
 
-			double priceOne = lOne.getValue()/lOne.calculateArea();
-			double priceTwo = lTwo.getValue()/lTwo.calculateArea();
-			double priceThree = lThree.getValue()/lThree.calculateArea();
+			double priceOne = lOne.getValue() / lOne.calculateArea() ;
+			double priceTwo = lTwo.getValue() / lTwo.calculateArea() ;
+			double priceThree = lThree.getValue() / lThree.calculateArea() ;
 
-			if(priceOne > priceTwo)
+			if(priceOne >= priceTwo && priceOne >= priceThree)
 			{
-				if(priceOne > priceThree)
+				priceOrder[0] = lOne;
+				if(priceTwo >= priceThree)
 				{
-					priceOrder[0] = lOne;
-					if(priceTwo > priceThree)
-					{
-						priceOrder[1] = lTwo;
-						priceOrder[2] = lThree;
-					}
-					else
-					{
-						priceOrder[1] = lThree;
-						priceOrder[2] = lTwo;
-					}
+					priceOrder[1] = lTwo;
+					priceOrder[2] = lThree;
+				}
+				else
+				{
+					priceOrder[1] = lThree;
+					priceOrder[2] = lTwo;
 				}
 			}
-			else if(priceTwo > priceOne)
+			else if(priceTwo >= priceOne && priceTwo >= priceThree)
 			{
-				if(priceTwo > priceThree)
+				priceOrder[0] = lTwo;
+				if(priceOne >= priceThree)
 				{
-					priceOrder[0] = lTwo;
-					if(priceOne > priceThree)
-					{
-						priceOrder[1] = lOne;
-						priceOrder[2] = lThree;
-					}
-					else
-					{
-						priceOrder[1] = lThree;
-						priceOrder[2] = lOne;
-					}
+					priceOrder[1] = lOne;
+					priceOrder[2] = lThree;
+				}
+				else
+				{
+					priceOrder[1] = lThree;
+					priceOrder[2] = lOne;
 				}
 			}
 			else
 			{
 				priceOrder[0] = lThree;
-				if(priceTwo > priceOne)
+				if(priceTwo >= priceOne)
 				{
 					priceOrder[1] = lTwo;
 					priceOrder[2] = lOne;
@@ -322,19 +376,21 @@ public class Main extends Application {
 			lOne = priceOrder[0];
 			lTwo = priceOrder[1];
 			lThree = priceOrder[2];
+			lumberlist.clear();
+			lumberlist.add(lOne);
+			lumberlist.add(lTwo);
+			lumberlist.add(lThree);
+
 
 			int multi = (int) (l.getLength() / (int) lOne.getLength());
 
-			scrap += l.getHeight() * l.getWidth() * l.getLength() - lOne.getLength();
+			double scrapInches = l.getHeight() * l.getWidth() * (l.getLength() - lOne.getLength() * multi);
+			scrap += scrapInches / 1728;	// 12" x 12" x 12" = 1728
 
 			double maxHeight = l.getHeight() / lOne.getHeight();
 			double maxWidth = l.getWidth() / lOne.getWidth();
 			int lOneCount = (int) maxHeight * (int) maxWidth * multi;
 			double[] boards = new double[3];
-			for(double d: boards)
-			{
-				d= 0.0;
-			}
 
 			double heightLeft = l.getHeight() - lOne.getHeight() * maxHeight;
 			double widthLeft = l.getWidth() - lOne.getWidth() * maxWidth;
@@ -359,17 +415,39 @@ public class Main extends Application {
 			double lOneValue = lOneCount * lOne.getValue();
 			double lTwoValue = lTwoCount * lOne.getValue();
 			double lThreeValue = lThreeCount * lOne.getValue();
-			double scrapValue = scrap * lScrap.getValue();
+			double scrapValue = scrap * lScrap;
 
-			String text = "";
+			ttlOne += lOneCount;
+			ttlTwo += lTwoCount;
+			ttlThree += lThreeCount;
+			ttlScrap += scrap;
+			ttlVal += lOneValue + lTwoValue + lThreeValue + scrapValue;
+
+			trunc = (String) String.format("%.2f", scrap);
+			scrap = Double.parseDouble(trunc);
+			trunc = (String) String.format("%.2f", scrapValue);
+			scrapValue = Double.parseDouble(trunc);
 
 			text += "" + lOne.getHeight() + "x" + lOne.getWidth() + "x" + lOne.getLength() +
 					": " + lOneCount + " $" + lOneValue + "\n" + lTwo.getHeight() + "x" + lTwo.getWidth() + "x" + lTwo.getLength() +
 					": " + lTwoCount + " $" + lTwoValue + "\n" + lThree.getHeight() + "x" + lThree.getWidth() + "x" + lThree.getLength() +
 					": " + lThreeCount + " $" + lThreeValue + "\n" + "Scrap: " + scrap + " $" + scrapValue + "\n\n";
-
-			previewtxa.setText(text);
 		}
+		trunc = (String) String.format("%.2f", ttlScrap);
+		ttlScrap = Double.parseDouble(trunc);
+
+		trunc = (String) String.format("%.2f", ttlVal);
+		ttlVal = Double.parseDouble(trunc);
+
+		countArray[0] = ttlOne;
+		countArray[1] = ttlTwo;
+		countArray[2] = ttlThree;
+
+		text += "Total number of " + lOne.getHeight() + "x" + lOne.getWidth() + "x" + lOne.getLength() + ": " + ttlOne + "\n" +
+				"Total number of " + lTwo.getHeight() + "x" + lTwo.getWidth() + "x" + lTwo.getLength() + ": " + ttlTwo + "\n" +
+				"Total number of " + lThree.getHeight() + "x" + lThree.getWidth() + "x" + lThree.getLength() + ": " + ttlThree + "\n" +
+				"Total number of scrap: " + ttlScrap + "\n" + "Total value: $" + ttlVal;
+		previewtxa.setText(text);
 	}
 
 	private double[] Optimization(Log h, Log w, Lumber one, Lumber two, double[] boards)
@@ -407,12 +485,14 @@ public class Main extends Application {
 			{
 				double maxHeight = h.getHeight() / two.getHeight();
 				double maxWidth = h.getWidth() / two.getWidth();
-				boards[1] = (int) maxHeight * (int) maxWidth;
+				boards[0] = 0.0;
+				result = (int) maxHeight * (int) maxWidth;
+				boards[1] = (double)result;
 
 				double heightLeft = h.getHeight() - two.getHeight() * maxHeight;
 				double widthLeft = h.getWidth() - two.getWidth() * maxWidth;
 
-				boards[2] = heightLeft * widthLeft * two.getLength() / 12;
+				boards[2] = heightLeft * widthLeft * two.getLength() / 1728;
 			}
 		}
 		if(one.getHeight() < w.getHeight())
@@ -423,7 +503,8 @@ public class Main extends Application {
 				{
 					double maxHeight = w.getHeight() / one.getHeight();
 					double maxWidth = w.getWidth() / one.getWidth();
-					boards[0] = (int) maxHeight * (int) maxWidth;
+					result = (int) maxHeight * (int) maxWidth;
+					boards[0] = (double)result;
 
 					double heightLeft = w.getHeight() - one.getHeight() * maxHeight;
 					double widthLeft = w.getWidth() - one.getWidth() * maxWidth;
@@ -451,12 +532,14 @@ public class Main extends Application {
 				{
 					double maxHeight = w.getHeight() / two.getHeight();
 					double maxWidth = w.getWidth() / two.getWidth();
-					boards[1] = (int) maxHeight * (int) maxWidth;
+					result = (int) maxHeight * (int) maxWidth;
+					boards[0] = 0.0;
+					boards[1] = (double)result;
 
 					double heightLeft = w.getHeight() - two.getHeight() * maxHeight;
 					double widthLeft = w.getWidth() - two.getWidth() * maxWidth;
 
-					boards[2] = heightLeft * widthLeft * two.getLength() / 12;
+					boards[2] = heightLeft * widthLeft * two.getLength() / 1728;
 				}
 			}
 		}
@@ -477,16 +560,18 @@ public class Main extends Application {
 				double heightLeft = h.getHeight() - one.getHeight() * maxHeight;
 				double widthLeft = h.getWidth() - one.getWidth() * maxWidth;
 
-				boards[2] = heightLeft * widthLeft * one.getLength() / 12;
+				boards[2] = heightLeft * widthLeft * one.getLength() / 1728;
 			}
 			else
 			{
-				boards[2] = h.getHeight() * h.getWidth() * one.getLength() / 12;
+				boards[1] = 0.0;
+				boards[2] = h.getHeight() * h.getWidth() * one.getLength() / 1728;
 			}
 		}
 		else
 		{
-			boards[2] = h.getHeight() * h.getWidth() * one.getLength() / 12;
+			boards[1] = 0.0;
+			boards[2] = h.getHeight() * h.getWidth() * one.getLength() / 1728;
 		}
 		if(one.getHeight() < w.getHeight())
 		{
@@ -504,11 +589,13 @@ public class Main extends Application {
 			}
 			else
 			{
+				boards[1] = 0.0;
 				boards[2] = w.getHeight() * w.getWidth() * one.getLength() / 12;
 			}
 		}
 		else
 		{
+			boards[1] = 0.0;
 			boards[2] = w.getHeight() * w.getWidth() * one.getLength() / 12;
 		}
 		return boards;
